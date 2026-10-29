@@ -6,6 +6,6 @@ struct TranslatorApp: App {
         WindowGroup("Translator") {
             ContentView()
         }
-        .defaultSize(width: 560, height: 680)
+        .defaultSize(width: 600, height: 1020)
     }
 }
