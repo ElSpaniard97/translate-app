@@ -2,10 +2,40 @@ import Combine
 import SwiftUI
 import Translation
 
+enum Direction: String, CaseIterable, Identifiable {
+    case spanishToEnglish
+    case englishToSpanish
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .spanishToEnglish: "Spanish → English"
+        case .englishToSpanish: "English → Spanish"
+        }
+    }
+
+    var spokenLanguageName: String {
+        switch self {
+        case .spanishToEnglish: "Spanish"
+        case .englishToSpanish: "English"
+        }
+    }
+
+    var translationConfig: TranslationSession.Configuration {
+        let spanish = Locale.Language(identifier: "es")
+        let english = Locale.Language(identifier: "en")
+        switch self {
+        case .spanishToEnglish: return .init(source: spanish, target: english)
+        case .englishToSpanish: return .init(source: english, target: spanish)
+        }
+    }
+}
+
 struct Line: Identifiable {
     let id = UUID()
-    let spanish: String
-    var english: String?
+    let original: String
+    var translation: String?
 }
 
 @MainActor
@@ -13,15 +43,12 @@ final class TranslatorModel: ObservableObject {
     @Published var lines: [Line] = []
     let listener = SpeechListener()
 
-    // Finished phrases waiting to be translated. The translation task below reads from it.
-    let pending: AsyncStream<Line.ID>
-    private let pendingContinuation: AsyncStream<Line.ID>.Continuation
+    // Finished phrases waiting to be translated. The translation task below reads
+    // from it, and gets a fresh stream each time the direction changes.
+    private var pendingContinuation: AsyncStream<Line.ID>.Continuation?
     private var listenerChanges: AnyCancellable?
 
     init() {
-        let stream = AsyncStream.makeStream(of: Line.ID.self)
-        pending = stream.stream
-        pendingContinuation = stream.continuation
         listenerChanges = listener.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -30,19 +57,26 @@ final class TranslatorModel: ObservableObject {
         }
     }
 
-    func add(_ spanish: String) {
-        let line = Line(spanish: spanish)
+    func newPendingStream() -> AsyncStream<Line.ID> {
+        pendingContinuation?.finish()
+        let stream = AsyncStream.makeStream(of: Line.ID.self)
+        pendingContinuation = stream.continuation
+        return stream.stream
+    }
+
+    func add(_ original: String) {
+        let line = Line(original: original)
         lines.append(line)
-        pendingContinuation.yield(line.id)
+        pendingContinuation?.yield(line.id)
     }
 
-    func spanish(for id: Line.ID) -> String? {
-        lines.first { $0.id == id }?.spanish
+    func original(for id: Line.ID) -> String? {
+        lines.first { $0.id == id }?.original
     }
 
-    func setEnglish(_ english: String, for id: Line.ID) {
+    func setTranslation(_ translation: String, for id: Line.ID) {
         if let index = lines.firstIndex(where: { $0.id == id }) {
-            lines[index].english = english
+            lines[index].translation = translation
         }
     }
 
@@ -54,11 +88,11 @@ final class TranslatorModel: ObservableObject {
 struct ContentView: View {
     @StateObject private var model = TranslatorModel()
     @AppStorage("dialect") private var dialect = "es-US"
+    @AppStorage("direction") private var direction = Direction.spanishToEnglish
 
-    private let translationConfig = TranslationSession.Configuration(
-        source: Locale.Language(identifier: "es"),
-        target: Locale.Language(identifier: "en")
-    )
+    private var speechLocale: String {
+        direction == .spanishToEnglish ? dialect : "en-US"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,18 +100,19 @@ struct ContentView: View {
             Divider()
             transcript
         }
-        .frame(minWidth: 380, minHeight: 400)
-        // Apple's on-device translator. macOS asks once to download the Spanish
-        // language pack if it isn't installed yet.
-        .translationTask(translationConfig) { session in
+        .frame(minWidth: 420, minHeight: 400)
+        // Apple's on-device translator. macOS asks once to download a language
+        // pack if it isn't installed yet. This restarts when the direction changes.
+        .translationTask(direction.translationConfig) { session in
+            let pending = await model.newPendingStream()
             try? await session.prepareTranslation()
-            for await id in model.pending {
-                guard let spanish = await model.spanish(for: id) else { continue }
+            for await id in pending {
+                guard let original = await model.original(for: id) else { continue }
                 do {
-                    let response = try await session.translate(spanish)
-                    await model.setEnglish(response.targetText, for: id)
+                    let response = try await session.translate(original)
+                    await model.setTranslation(response.targetText, for: id)
                 } catch {
-                    await model.setEnglish("(Could not translate: \(error.localizedDescription))", for: id)
+                    await model.setTranslation("(Could not translate: \(error.localizedDescription))", for: id)
                 }
             }
         }
@@ -85,6 +120,13 @@ struct ContentView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Picker("Direction", selection: $direction) {
+                ForEach(Direction.allCases) { Text($0.label).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(model.listener.isListening)
+
             HStack {
                 Picker("Spanish", selection: $dialect) {
                     Text("Spanish (US)").tag("es-US")
@@ -93,13 +135,13 @@ struct ContentView: View {
                 }
                 .labelsHidden()
                 .frame(maxWidth: 180)
-                .disabled(model.listener.isListening)
+                .disabled(model.listener.isListening || direction == .englishToSpanish)
 
                 Button(model.listener.isListening ? "Stop" : "Start listening") {
                     if model.listener.isListening {
                         model.listener.stop()
                     } else {
-                        Task { await model.listener.start(localeID: dialect) }
+                        Task { await model.listener.start(localeID: speechLocale, languageName: direction.spokenLanguageName) }
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -122,9 +164,9 @@ struct ContentView: View {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(model.lines) { line in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(line.english ?? "Translating…")
+                            Text(line.translation ?? "Translating…")
                                 .font(.title2.weight(.semibold))
-                            Text(line.spanish)
+                            Text(line.original)
                                 .foregroundStyle(.secondary)
                         }
                         .textSelection(.enabled)

@@ -2,12 +2,12 @@ import AVFoundation
 import Speech
 
 // Listens to the microphone with Apple's speech recognizer and reports each
-// finished Spanish phrase. A phrase ends when the speaker pauses briefly.
+// finished phrase. A phrase ends when the speaker pauses briefly.
 @MainActor
 final class SpeechListener: ObservableObject {
     @Published private(set) var isListening = false
     @Published private(set) var partialText = ""
-    @Published private(set) var status = "Press Start listening (or the space bar) and speak Spanish."
+    @Published private(set) var status = "Press Start listening (or the space bar) and start speaking."
 
     var onPhrase: ((String) -> Void)?
 
@@ -21,13 +21,13 @@ final class SpeechListener: ObservableObject {
 
     private static let pauseSeconds = 1.2
 
-    func start(localeID: String) async {
+    func start(localeID: String, languageName: String) async {
         guard await Self.requestPermissions() else {
             status = "Allow Microphone and Speech Recognition for Translator in System Settings → Privacy & Security."
             return
         }
         guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: localeID)), recognizer.isAvailable else {
-            status = "Spanish speech recognition isn't available right now."
+            status = "\(languageName) speech recognition isn't available right now."
             return
         }
         self.recognizer = recognizer
@@ -44,8 +44,8 @@ final class SpeechListener: ObservableObject {
 
         isListening = true
         status = recognizer.supportsOnDeviceRecognition
-            ? "Listening for Spanish (on this Mac)…"
-            : "Listening for Spanish…"
+            ? "Listening for \(languageName) (on this Mac)…"
+            : "Listening for \(languageName)…"
         startRecognitionTask()
     }
 

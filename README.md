@@ -1,6 +1,7 @@
 # translate-app
 
-Listen to Spanish speech through your microphone and read it in English, live.
+Listen to speech through your microphone and read the translation live:
+Spanish → English or English → Spanish (pick the direction at the top).
 
 Version 1 is deliberately simple: one page, a Start button, and a running list of
 phrases showing the English translation in large text with the original Spanish under it.
@@ -93,6 +94,12 @@ You can also press the space bar to start and stop.
 
 If macOS says the app "can't be opened" because it is from an unidentified developer,
 right-click it, choose **Open**, then **Open** again. You only need to do this once.
+
+To update the app later with the newest code:
+
+```bash
+cd ~/Documents/translate-app && git checkout main && git pull && ./mac/build.sh --install
+```
 
 ## Limits to know about
 

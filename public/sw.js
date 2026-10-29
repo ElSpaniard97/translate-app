@@ -1,6 +1,6 @@
 // Minimal service worker so the page can be installed as an app.
 // It caches the app shell; speech recognition and translation still need a connection.
-const CACHE = 'translate-v1';
+const CACHE = 'translate-v2';
 const FILES = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'icon.svg'];
 
 self.addEventListener('install', (event) => {

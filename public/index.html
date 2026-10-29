@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Spanish → English</title>
+  <title>Translator</title>
   <meta name="theme-color" content="#1f6feb">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
@@ -11,8 +11,12 @@
 </head>
 <body>
   <header>
-    <h1>Spanish → English</h1>
+    <h1>Translator</h1>
     <div class="controls">
+      <select id="direction" aria-label="Translation direction">
+        <option value="es-en">Spanish → English</option>
+        <option value="en-es">English → Spanish</option>
+      </select>
       <select id="dialect" aria-label="Spanish dialect">
         <option value="es-US">Spanish (US)</option>
         <option value="es-MX">Spanish (Mexico)</option>
