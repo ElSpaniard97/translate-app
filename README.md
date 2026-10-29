@@ -87,12 +87,6 @@ cd translate-app/mac
 ./build.sh --install
 ```
 
-To update an installed copy after pulling new changes:
-
-```bash
-cd ~/Documents/translate-app && git checkout main && git pull && ./mac/build.sh --install
-```
-
 That builds **Translator.app** and copies it to your `Applications` folder in your home folder
 (`~/Applications`). Open it from Spotlight or Launchpad and drag it to your Dock if you like.
 The first time you press **Start listening**, allow the microphone and speech recognition.
@@ -100,6 +94,12 @@ You can also press the space bar to start and stop.
 
 If macOS says the app "can't be opened" because it is from an unidentified developer,
 right-click it, choose **Open**, then **Open** again. You only need to do this once.
+
+To update the app later with the newest code:
+
+```bash
+cd ~/Documents/translate-app && git checkout main && git pull && ./mac/build.sh --install
+```
 
 ## Limits to know about
 
