@@ -1,0 +1,16 @@
+name: Build Mac app
+
+on:
+  pull_request:
+    paths: ['mac/**', '.github/workflows/mac-build.yml']
+  push:
+    branches: [main]
+    paths: ['mac/**', '.github/workflows/mac-build.yml']
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swiftc --version
+      - run: ./mac/build.sh
