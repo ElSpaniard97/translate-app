@@ -1,6 +1,7 @@
 # translate-app
 
-Listen to Spanish speech through your microphone and read it in English, live.
+Listen to speech through your microphone and read the translation live:
+Spanish → English or English → Spanish (pick the direction at the top).
 
 Version 1 is deliberately simple: one page, a Start button, and a running list of
 phrases showing the English translation in large text with the original Spanish under it.
@@ -84,6 +85,12 @@ fails in Terminal, run `xcode-select --install` first. You don't need the full X
 ```bash
 cd translate-app/mac
 ./build.sh --install
+```
+
+To update an installed copy after pulling new changes:
+
+```bash
+cd ~/Documents/translate-app && git checkout main && git pull && ./mac/build.sh --install
 ```
 
 That builds **Translator.app** and copies it to your `Applications` folder in your home folder
