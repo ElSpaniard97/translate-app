@@ -6,8 +6,12 @@ import Speech
 @MainActor
 final class SpeechListener: ObservableObject {
     @Published private(set) var isListening = false
+    @Published private(set) var isStarting = false
     @Published private(set) var partialText = ""
-    @Published private(set) var status = "Press Start listening (or the space bar) and start speaking."
+    static let idleStatus = "Press Start listening (or the space bar) and start speaking."
+    @Published private(set) var status = SpeechListener.idleStatus
+    // True once listening has been started at least once, so the UI can offer "Resume".
+    @Published private(set) var hasStarted = false
 
     var onPhrase: ((String) -> Void)?
 
@@ -22,6 +26,10 @@ final class SpeechListener: ObservableObject {
     private static let pauseSeconds = 1.2
 
     func start(localeID: String, languageName: String) async {
+        guard !isListening, !isStarting else { return }
+        isStarting = true
+        defer { isStarting = false }
+        status = "Requesting microphone and speech access…"
         guard await Self.requestPermissions() else {
             status = "Allow Microphone and Speech Recognition for Translator in System Settings → Privacy & Security."
             return
@@ -32,6 +40,11 @@ final class SpeechListener: ObservableObject {
         }
         self.recognizer = recognizer
 
+        let format = audioEngine.inputNode.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            status = "No microphone is available. Connect an input device and try again."
+            return
+        }
         Self.installTap(on: audioEngine.inputNode, holder: requestHolder)
         audioEngine.prepare()
         do {
@@ -43,6 +56,7 @@ final class SpeechListener: ObservableObject {
         }
 
         isListening = true
+        hasStarted = true
         status = recognizer.supportsOnDeviceRecognition
             ? "Listening for \(languageName) (on this Mac)…"
             : "Listening for \(languageName)…"
@@ -91,7 +105,8 @@ final class SpeechListener: ObservableObject {
             commitPhrase()
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
-                self?.startRecognitionTask()
+                guard let self, self.generation == generation, self.isListening else { return }
+                self.startRecognitionTask()
             }
         }
     }

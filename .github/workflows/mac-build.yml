@@ -14,3 +14,10 @@ jobs:
       - uses: actions/checkout@v4
       - run: swiftc --version
       - run: ./mac/build.sh
+      - name: Run model checks
+        working-directory: mac
+        run: |
+          swiftc -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macos15.0" \
+            Sources/ContentView.swift Sources/SpeechListener.swift Tests/ModelChecks.swift \
+            -o build/ModelChecks
+          build/ModelChecks

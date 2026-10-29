@@ -121,3 +121,25 @@ server.js        Tiny local web server (no dependencies)
 mac/             Native macOS app (Swift), built with mac/build.sh
 .github/workflows/pages.yml   Publishes public/ to GitHub Pages
 ```
+
+### Native Mac conversation tools
+
+The Mac app includes adjustable translation text size, copy buttons on translated
+phrases, and a Share menu for copying or exporting the conversation as a text file.
+Each phrase keeps its original language direction and timestamp. Clear is available
+when listening and pending translations have stopped; Undo clear restores the last
+cleared conversation. Conversation history is held in memory until the window closes.
+
+Translation must finish preparing before listening starts. Preparation errors and
+failed phrases provide retry buttons. Finish pending translations before changing
+direction; stop listening to switch speakers. The transcript automatically scrolls down as speech and translations arrive.
+
+### Reference-style interface
+
+The native app uses a dark conversation layout with language cards, a swap control,
+Conversation / Voice / Text tabs, speech bubbles, and a red microphone button.
+Conversation aligns Spanish and English messages on opposite sides; Voice aligns
+all phrases on the left. Select the spoken language before listening; automatic
+language detection is not implemented. Text mode translates typed messages without
+microphone access. Speaker buttons read translations aloud. Right-click a bubble
+to copy text, and use the bottom options menu to export or adjust text size.
