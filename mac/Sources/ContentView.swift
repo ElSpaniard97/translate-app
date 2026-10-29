@@ -315,7 +315,7 @@ struct ContentView: View {
                     VStack(spacing: 9) {
                         roundButton(icon: model.listener.isListening ? "pause.fill" : "play.fill") { toggleListening() }
                             .disabled(!model.ready || model.listener.isStarting)
-                        Text(model.listener.isListening ? "Pause" : "Resume").font(.system(size: 17)).foregroundStyle(muted)
+                        Text(model.listener.isListening ? "Pause" : model.listener.hasStarted ? "Resume" : "Start").font(.system(size: 17)).foregroundStyle(muted)
                     }.frame(width: 90)
                     Spacer()
                     VStack(spacing: 13) {
@@ -338,7 +338,7 @@ struct ContentView: View {
                     }.frame(width: 90)
                 }
             }
-            if model.listener.isListening || model.listener.isStarting || model.listener.status != "Press Start listening (or the space bar) and start speaking." {
+            if model.listener.isListening || model.listener.isStarting || model.listener.status != SpeechListener.idleStatus {
                 Text(model.listener.status).font(.caption).foregroundStyle(muted).multilineTextAlignment(.center)
             }
             HStack {

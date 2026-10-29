@@ -8,7 +8,10 @@ final class SpeechListener: ObservableObject {
     @Published private(set) var isListening = false
     @Published private(set) var isStarting = false
     @Published private(set) var partialText = ""
-    @Published private(set) var status = "Press Start listening (or the space bar) and start speaking."
+    static let idleStatus = "Press Start listening (or the space bar) and start speaking."
+    @Published private(set) var status = SpeechListener.idleStatus
+    // True once listening has been started at least once, so the UI can offer "Resume".
+    @Published private(set) var hasStarted = false
 
     var onPhrase: ((String) -> Void)?
 
@@ -53,6 +56,7 @@ final class SpeechListener: ObservableObject {
         }
 
         isListening = true
+        hasStarted = true
         status = recognizer.supportsOnDeviceRecognition
             ? "Listening for \(languageName) (on this Mac)…"
             : "Listening for \(languageName)…"
