@@ -1,0 +1,10 @@
+{
+  "name": "translate-app",
+  "version": "1.0.0",
+  "description": "Listen to Spanish speech and read it in English.",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "license": "MIT"
+}
