@@ -17,6 +17,12 @@ enum Direction: String, CaseIterable, Identifiable {
     }
 }
 
+// Work for the translation loop: a finished phrase, or the words still being spoken.
+enum TranslationJob: Equatable, Sendable {
+    case line(UUID)
+    case live
+}
+
 struct Line: Identifiable {
     let id = UUID()
     let original: String
@@ -32,10 +38,14 @@ final class TranslatorModel: ObservableObject {
     @Published var ready = false
     @Published var preparationError: String?
     @Published var canUndo = false
+    // Translation of the phrase still being spoken, shown before the phrase ends.
+    @Published private(set) var liveTranslation = ""
     let listener = SpeechListener()
     var direction = Direction.spanishToEnglish
     private var cleared: [Line] = []
-    private var pending: AsyncStream<UUID>.Continuation?
+    private var pending: AsyncStream<TranslationJob>.Continuation?
+    private var liveSource = ""
+    private var liveQueued = false
     private var listenerChanges: AnyCancellable?
 
     init() {
@@ -43,24 +53,50 @@ final class TranslatorModel: ObservableObject {
         listener.onPhrase = { [weak self] phrase in self?.add(phrase) }
     }
     func add(_ original: String) {
-        let line = Line(original: original, direction: direction)
+        var line = Line(original: original, direction: direction)
+        // The live translation usually already covers the finished phrase, so reuse it.
+        if !liveTranslation.isEmpty, liveSource == original { line.translation = liveTranslation }
+        clearLive()
         lines.append(line)
-        pending?.yield(line.id)
+        if line.translation == nil { pending?.yield(.line(line.id)) }
     }
-    func stream(for direction: Direction) -> AsyncStream<UUID> {
+    func stream(for direction: Direction) -> AsyncStream<TranslationJob> {
         pending?.finish()
-        let stream = AsyncStream.makeStream(of: UUID.self)
+        let stream = AsyncStream.makeStream(of: TranslationJob.self)
         pending = stream.continuation
+        liveQueued = false
         for line in lines where line.direction == direction && line.translation == nil {
-            pending?.yield(line.id)
+            pending?.yield(.line(line.id))
         }
         return stream.stream
     }
+
+    // Called whenever the in-progress speech changes. At most one live job is queued
+    // at a time, and it translates whatever is being said when its turn comes.
+    func requestLiveTranslation() {
+        guard !currentSpeech.isEmpty else { clearLive(); return }
+        guard ready, !liveQueued else { return }
+        liveQueued = true
+        pending?.yield(.live)
+    }
+    func takeLiveText() -> String? {
+        liveQueued = false
+        let text = currentSpeech
+        return text.isEmpty || text == liveSource ? nil : text
+    }
+    func setLive(_ translation: String, for source: String) {
+        // Ignore results for speech that has since been committed as a phrase.
+        guard !source.isEmpty, currentSpeech.hasPrefix(source) else { return }
+        liveSource = source
+        liveTranslation = translation
+    }
+    private var currentSpeech: String { listener.partialText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private func clearLive() { liveSource = ""; liveTranslation = "" }
     func retry(_ line: Line) {
         guard line.direction == direction, ready,
               let index = lines.firstIndex(where: { $0.id == line.id }) else { return }
         lines[index].error = nil
-        pending?.yield(line.id)
+        pending?.yield(.line(line.id))
     }
     func update(_ id: UUID, translation: String? = nil, error: String? = nil) {
         guard let index = lines.firstIndex(where: { $0.id == id }) else { return }
@@ -70,7 +106,7 @@ final class TranslatorModel: ObservableObject {
     func clear() { cleared = lines; lines = []; canUndo = !cleared.isEmpty }
     func undo() {
         lines.insert(contentsOf: cleared, at: 0)
-        for line in cleared where line.translation == nil && line.direction == direction { pending?.yield(line.id) }
+        for line in cleared where line.translation == nil && line.direction == direction { pending?.yield(.line(line.id)) }
         cleared = []; canUndo = false
     }
     var exportText: String {
@@ -132,16 +168,24 @@ struct ContentView: View {
                 model.preparationError = error.localizedDescription
                 return
             }
-            for await id in model.stream(for: activeDirection) {
+            for await job in model.stream(for: activeDirection) {
                 guard !Task.isCancelled, direction == activeDirection else { return }
-                guard let line = model.lines.first(where: { $0.id == id }), line.translation == nil else { continue }
-                do {
-                    let result = try await session.translate(line.original)
-                    try Task.checkCancellation()
-                    model.update(id, translation: result.targetText)
-                } catch {
-                    guard !Task.isCancelled else { return }
-                    model.update(id, error: error.localizedDescription)
+                switch job {
+                case .live:
+                    guard let text = model.takeLiveText() else { continue }
+                    if let result = try? await session.translate(text), !Task.isCancelled {
+                        model.setLive(result.targetText, for: text)
+                    }
+                case .line(let id):
+                    guard let line = model.lines.first(where: { $0.id == id }), line.translation == nil else { continue }
+                    do {
+                        let result = try await session.translate(line.original)
+                        try Task.checkCancellation()
+                        model.update(id, translation: result.targetText)
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        model.update(id, error: error.localizedDescription)
+                    }
                 }
             }
         }
@@ -238,7 +282,7 @@ struct ContentView: View {
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 15) {
+                LazyVStack(spacing: 0) {
                     if model.lines.isEmpty && model.listener.partialText.isEmpty {
                         VStack(spacing: 14) {
                             Image(systemName: "bubble.left.and.bubble.right").font(.system(size: 38)).foregroundStyle(muted.opacity(0.5))
@@ -246,34 +290,50 @@ struct ContentView: View {
                             Text(mode == "Text" ? "Type a message below to translate." : "Tap the microphone and start speaking.").foregroundStyle(muted)
                         }.frame(maxWidth: .infinity).padding(.vertical, 65)
                     }
-                    ForEach(model.lines) { line in card(line) }
-                    if !model.listener.partialText.isEmpty {
-                        HStack { Label(model.listener.partialText, systemImage: "waveform").foregroundStyle(muted); Spacer() }.padding(18)
-                    }
+                    ForEach(model.lines) { line in row(line) }
+                    if !model.listener.partialText.isEmpty { liveRow }
                     Color.clear.frame(height: 1).id("bottom")
                 }.padding(.horizontal, 28).padding(.vertical, 8)
             }
             .defaultScrollAnchor(.bottom)
             .onChange(of: model.lines.count) { withAnimation { proxy.scrollTo("bottom", anchor: .bottom) } }
-            .onChange(of: model.listener.partialText) { proxy.scrollTo("bottom", anchor: .bottom) }
+            .onChange(of: model.listener.partialText) {
+                model.requestLiveTranslation()
+                proxy.scrollTo("bottom", anchor: .bottom)
+            }
             .onChange(of: model.lines.map { $0.translation }) { proxy.scrollTo("bottom", anchor: .bottom) }
         }
     }
 
-    private func card(_ line: Line) -> some View {
-        let right = mode == "Conversation" && line.direction == .spanishToEnglish
-        return HStack {
-            if right { Spacer(minLength: 64) }
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(line.original).font(.system(size: fontSize - 2, weight: .medium)).textSelection(.enabled)
+    // One entry in the list: the translation in large text, the original underneath.
+    private func row(_ line: Line) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(line.direction == .spanishToEnglish ? "🇲🇽 → 🇺🇸" : "🇺🇸 → 🇲🇽")
+                        Text(line.date.formatted(date: .omitted, time: .shortened))
+                    }.font(.caption).foregroundStyle(muted)
                     if let translation = line.translation {
-                        Text(translation).font(.system(size: fontSize - 3)).foregroundStyle(muted).textSelection(.enabled)
+                        Text(translation).font(.system(size: fontSize, weight: .semibold)).textSelection(.enabled)
                     } else if let error = line.error {
                         Text(error).font(.callout).foregroundStyle(.red)
                         if line.direction == direction { Button("Retry translation") { model.retry(line) }.disabled(!model.ready) }
-                    } else { Text("Translating…").foregroundStyle(muted) }
-                }.frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Translating…").font(.system(size: fontSize - 4)).foregroundStyle(muted)
+                    }
+                    Text(line.original).font(.system(size: fontSize - 7)).foregroundStyle(muted).textSelection(.enabled)
+                }
+                .padding(.leading, mode == "Conversation" ? 16 : 0)
+                .overlay(alignment: .leading) {
+                    // In Conversation mode a colored bar tells the two speakers apart.
+                    if mode == "Conversation" {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(line.direction == .spanishToEnglish ? Color.cyan : blue)
+                            .frame(width: 4)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 if let translation = line.translation {
                     Button {
                         let utterance = AVSpeechUtterance(string: translation)
@@ -284,15 +344,27 @@ struct ContentView: View {
                         .buttonStyle(.plain).help("Read translation aloud")
                 }
             }
-            .padding(18)
-            .background(LinearGradient(colors: right ? [Color(red: 0.13, green: 0.15, blue: 0.17), Color(red: 0.10, green: 0.12, blue: 0.14)] : [Color(red: 0.13, green: 0.19, blue: 0.28), Color(red: 0.095, green: 0.14, blue: 0.22)], startPoint: .topLeading, endPoint: .bottomTrailing), in: BubbleShape(right: right))
-            .overlay(BubbleShape(right: right).stroke(right ? .white.opacity(0.09) : Color(red: 0.31, green: 0.41, blue: 0.55).opacity(0.65), lineWidth: 1.5))
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
             .contextMenu {
                 Button("Copy original") { copy(line.original) }
                 if let translation = line.translation { Button("Copy translation") { copy(translation) } }
             }
-            if !right { Spacer(minLength: 64) }
+            Divider().overlay(.white.opacity(0.08))
         }
+    }
+
+    // What is being said right now, translated as it comes in.
+    private var liveRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Listening", systemImage: "waveform").font(.caption).foregroundStyle(Color.cyan)
+            if !model.liveTranslation.isEmpty {
+                Text(model.liveTranslation).font(.system(size: fontSize, weight: .semibold)).opacity(0.75)
+            }
+            Text(model.listener.partialText).font(.system(size: fontSize - 7)).foregroundStyle(muted)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 14)
     }
 
     private func toggleListening() {
@@ -371,18 +443,4 @@ struct ContentView: View {
         model.add(text); draft = ""
     }
     private func copy(_ text: String) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
-}
-
-struct BubbleShape: Shape {
-    let right: Bool
-    func path(in rect: CGRect) -> Path {
-        var path = Path(roundedRect: rect.insetBy(dx: 5, dy: 0), cornerRadius: 23)
-        let x = right ? rect.maxX - 5 : rect.minX + 5
-        let sign: CGFloat = right ? 1 : -1
-        path.move(to: CGPoint(x: x, y: rect.maxY - 23))
-        path.addQuadCurve(to: CGPoint(x: x + sign * 9, y: rect.maxY - 3), control: CGPoint(x: x, y: rect.maxY - 10))
-        path.addQuadCurve(to: CGPoint(x: x - sign * 15, y: rect.maxY - 8), control: CGPoint(x: x + sign * 2, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
 }

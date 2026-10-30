@@ -7,7 +7,7 @@ import Foundation
         let originalID = model.lines[0].id
         var iterator = model.stream(for: .spanishToEnglish).makeAsyncIterator()
         let queuedID = await iterator.next()
-        precondition(queuedID == originalID, "Phrases queued before readiness must survive")
+        precondition(queuedID == .line(originalID), "Phrases queued before readiness must survive")
         model.update(originalID, translation: "Hello")
         model.direction = .englishToSpanish
         model.add("Good morning")
@@ -18,7 +18,7 @@ import Foundation
         model.ready = true
         var reverse = model.stream(for: .englishToSpanish).makeAsyncIterator()
         let reverseID = await reverse.next()
-        precondition(reverseID == secondID)
+        precondition(reverseID == .line(secondID))
         model.retry(model.lines[1])
         precondition(model.lines[1].error == nil)
         model.update(secondID, translation: "Buenos días")

@@ -23,7 +23,7 @@ final class SpeechListener: ObservableObject {
     // Increases on every restart so late callbacks from an old task are ignored.
     private var generation = 0
 
-    private static let pauseSeconds = 1.2
+    private static let pauseSeconds = 0.8
 
     func start(localeID: String, languageName: String) async {
         guard !isListening, !isStarting else { return }
