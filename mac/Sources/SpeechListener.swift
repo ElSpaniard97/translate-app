@@ -22,6 +22,15 @@ final class SpeechListener: ObservableObject {
     private var pauseTimer: Timer?
     // Increases on every restart so late callbacks from an old task are ignored.
     private var generation = 0
+    private var languageName = ""
+    // On-device recognition is faster, but macOS refuses it when Dictation is off.
+    // After it fails once, use Apple's online recognizer for the rest of the session.
+    private var preferOnDevice = true
+    private var usingOnDevice = false
+    // Errors in a row with no speech heard. Several means recognition is broken, so
+    // stop and say why instead of retrying forever.
+    private var failuresInARow = 0
+    private static let maxFailuresInARow = 3
 
     private static let pauseSeconds = 0.8
 
@@ -57,9 +66,9 @@ final class SpeechListener: ObservableObject {
 
         isListening = true
         hasStarted = true
-        status = recognizer.supportsOnDeviceRecognition
-            ? "Listening for \(languageName) (on this Mac)…"
-            : "Listening for \(languageName)…"
+        self.languageName = languageName
+        preferOnDevice = true
+        failuresInARow = 0
         startRecognitionTask()
     }
 
@@ -84,25 +93,39 @@ final class SpeechListener: ObservableObject {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
-        if recognizer.supportsOnDeviceRecognition {
-            request.requiresOnDeviceRecognition = true
-        }
+        usingOnDevice = preferOnDevice && recognizer.supportsOnDeviceRecognition
+        request.requiresOnDeviceRecognition = usingOnDevice
+        status = usingOnDevice
+            ? "Listening for \(languageName) (on this Mac)…"
+            : "Listening for \(languageName)…"
         requestHolder.set(request)
         task = Self.makeTask(recognizer: recognizer, request: request, generation: generation, listener: self)
     }
 
-    fileprivate func handle(text: String?, isFinal: Bool, failed: Bool, generation: Int) {
+    fileprivate func handle(text: String?, isFinal: Bool, error: RecognitionError?, generation: Int) {
         guard generation == self.generation, isListening else { return }
         if let text {
             partialText = text
+            failuresInARow = 0
             schedulePauseCommit()
         }
         if isFinal {
             commitPhrase()
             startRecognitionTask()
-        } else if failed {
-            // Usually "no speech detected". Keep what we have and try again shortly.
+        } else if let error {
             commitPhrase()
+            if !error.isNoSpeech {
+                failuresInARow += 1
+                if usingOnDevice {
+                    preferOnDevice = false
+                } else if failuresInARow >= Self.maxFailuresInARow {
+                    stop()
+                    status = "Speech recognition isn't working: \(error.message). "
+                        + "Check that Dictation is on in System Settings → Keyboard, then try again."
+                    return
+                }
+            }
+            // Keep what we have and try again shortly.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(500))
                 guard let self, self.generation == generation, self.isListening else { return }
@@ -151,9 +174,9 @@ final class SpeechListener: ObservableObject {
         recognizer.recognitionTask(with: request) { result, error in
             let text = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
-            let failed = error != nil
+            let failure = error.map(RecognitionError.init)
             Task { @MainActor in
-                listener.handle(text: text, isFinal: isFinal, failed: failed, generation: generation)
+                listener.handle(text: text, isFinal: isFinal, error: failure, generation: generation)
             }
         }
     }
@@ -164,6 +187,19 @@ final class SpeechListener: ObservableObject {
         }
         guard speechAllowed else { return false }
         return await AVCaptureDevice.requestAccess(for: .audio)
+    }
+}
+
+// The parts of a recognition error the listener needs, safe to pass between threads.
+struct RecognitionError: Sendable {
+    let message: String
+    // "No speech detected" just means a quiet moment, not a problem.
+    let isNoSpeech: Bool
+
+    init(_ error: Error) {
+        let nsError = error as NSError
+        message = nsError.localizedDescription
+        isNoSpeech = nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 1110
     }
 }
 
